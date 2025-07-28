@@ -8,11 +8,11 @@ generate_motor_commands(x, y)
 
 
 ```
-                for segment in segments:
-                    length = len(segment)
-                    for i in range(0, length - 1, stride):
-                        x, y = segment[i]
-                        generate_motor_commands(x, y)
+for segment in segments:
+    length = len(segment)
+    for i in range(0, length - 1, stride):
+        x, y = segment[i]
+        generate_motor_commands(x, y)
 ```
 
 
