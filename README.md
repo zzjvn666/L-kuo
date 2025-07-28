@@ -18,3 +18,7 @@ for segment in segments:
 
 
 yuanshen.py就能画一个原神
+
+
+
+L-kuo.py可以看识别出来的轮廓和顺序（颜色深浅代表顺序），红色点代表分段点
