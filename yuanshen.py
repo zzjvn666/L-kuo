@@ -4,10 +4,83 @@ import matplotlib.pyplot as plt
 import math
 import sys
 import gc
+import tkinter as tk
+from tkinter import ttk, messagebox
+import os
+import serial
+import serial.tools.list_ports
+import time
+import cv2
+import numpy as np
+from threading import Thread
+
+
+PORT = '/dev/ttyUSB0'
+
 
 # 设置支持中文显示
 plt.rcParams["font.family"] = ["SimHei"]
 sys.setrecursionlimit(10000)
+
+# ================= 串口控制 =================
+def send_hex_data(port, hex_data, baudrate=115200, timeout=1):
+    try:
+        if not os.path.exists(port):
+            print(f"错误: 串口设备 {port} 不存在")
+            return False
+        with serial.Serial(port, baudrate, timeout=timeout) as ser:
+            if isinstance(hex_data, str):
+                message = bytes.fromhex(hex_data.replace(" ", ""))
+            elif isinstance(hex_data, list):
+                message = bytes(hex_data)
+            else:
+                message = hex_data
+            ser.write(message)
+            print(f"已发送: {message.hex().upper()}")
+            return True
+    except Exception as e:
+        print(f"发送错误: {e}")
+        return False
+
+def Motor_Control_tb(Pulse_count, ID=0x01, A=0x00, Speed=0x05, PORT=PORT):
+    msg = [ID, 0xFD]
+    direction = 1 if Speed >= 0 else 0
+    Speed = abs(Speed)
+    msg += [direction, Speed // 256, Speed % 256, A,
+            (Pulse_count >> 24) & 0xFF, (Pulse_count >> 16) & 0xFF,
+            (Pulse_count >> 8) & 0xFF, Pulse_count & 0xFF,
+            0x01, 0x01, 0x6B]
+    send_hex_data(PORT, msg)
+
+def generate_motor_commands(x, y, speed = 256):
+    """
+    根据目标位移 (x, y) 和速度 speed，生成两个电机的控制命令字符串。
+
+    参数:
+        x (int): x方向位移（右为正）
+        y (int): y方向位移（上为正）
+        speed (int): 电机速度大小（正负表示方向）
+
+    返回:
+        list[str]: 两个电机的命令字符串
+    """
+
+    # 避免 speed = 0 的除以 0 错误
+    if speed == 0:
+        raise ValueError("Speed 不能为0")
+
+    # 电机 0x01 控制 x（右）
+    pulse_x = int(abs(x))
+    speed_x = speed if x >= 0 else -speed
+
+    # 电机 0x02 控制 y（下），但坐标系中 y 上为正，所以要取 -y
+    pulse_y = int(abs(y))
+    speed_y = -speed if y >= 0 else speed  # y > 0 表示向上，对应电机方向为负
+
+    Motor_Control_tb(ID = 0x01, Pulse_count = pulse_x, Speed = speed_x)
+    Motor_Control_tb(ID = 0x02, Pulse_count = pulse_y, Speed = speed_y)
+    time.sleep(0.0001)
+    send_hex_data(PORT, [0x00, 0xFF, 0x66, 0x6B])
 
 class AllContourVisualizer:
     def __init__(self, image_path, threshold_method='otsu', blur_kernel=(3, 3),
@@ -236,16 +309,16 @@ def extract_transformed_segments(image_path, origin=(0, 0), scale=1.0,
         scale_factor=scale_factor
     )
 
-    # 图像处理流程
-    try:
-        visualizer.load_image()
-        visualizer.preprocess_image()
-        visualizer.binarize_image()
-        visualizer.extract_all_contours()
-        visualizer.optimize_path()
-    except Exception as e:
-        print(f"处理失败: {e}")
-        return []
+    # # 图像处理流程
+    # try:
+    #     visualizer.load_image()
+    #     visualizer.preprocess_image()
+    #     visualizer.binarize_image()
+    #     visualizer.extract_all_contours()
+    #     visualizer.optimize_path()
+    # except Exception as e:
+    #     print(f"处理失败: {e}")
+    #     return []
 
     # 坐标变换
     transformed_segments = visualizer.transform_coordinates(
@@ -256,10 +329,26 @@ def extract_transformed_segments(image_path, origin=(0, 0), scale=1.0,
 
 
 if __name__ == "__main__":
-    image_path = "mihoyo.jpg"
-    origin = (-2700,1600)
-    scale = 0.5
+    PORT = '/dev/ttyUSB0'
+    send_hex_data(PORT, [0x01, 0x9A, 0x00, 0x00, 0x6B])
+    send_hex_data(PORT, [0x02, 0x9A, 0x00, 0x00, 0x6B])
+    
+    # image_path = "/root/D-race/Z-zong/nailong.jpg"
+    # origin = (-2250,-1600)
+    # scale = 1.3
 
+
+    # image_path = "/root/D-race/Z-zong/yuanshen.jpg"
+    # origin = (-2250,-1600)
+    # scale = 0.8
+
+    # image_path = "/root/D-race/Z-zong/mihoyo.jpg"
+    # origin = (-2100,-1600)
+    # scale = 0.5
+
+    time.sleep(0.2)
+    generate_motor_commands(origin[0],origin[1])
+    time.sleep(0.2)
     segments = extract_transformed_segments(image_path, origin=origin, scale=scale)
 
     print(f"共 {len(segments)} 段")
@@ -271,18 +360,18 @@ if __name__ == "__main__":
     xs = [x for x, y in all_points]
     ys = [y for x, y in all_points]
 
-    print("\n变换后边界框:")
-    print(f"  左下角: ({min(xs):.2f}, {min(ys):.2f})")
-    print(f"  右上角: ({max(xs):.2f}, {max(ys):.2f})")
-    print(f"  宽度 W: {max(xs) - min(xs):.2f}")
-    print(f"  高度 H: {max(ys) - min(ys):.2f}")
+    stride = 3  # 每隔几个点发送一次指令（例如 3 表示每隔 3 个点发一次）
 
-    # try:
-    #     visualizer.load_image()
-    #     visualizer.preprocess_image()
-    #     visualizer.binarize_image()
-    #     visualizer.extract_all_contours()  # 提取所有轮廓（外部+内部）
-    #     visualizer.optimize_path()
-    #     visualizer.static_visualization()
-    # except Exception as e:
-    #     print(f"程序运行出错: {e}")
+    for segment in segments:
+        length = len(segment)
+        for i in range(0, length - 1, stride):
+            x, y = segment[i]
+            generate_motor_commands(x, y)
+
+        # 保证最后一个点也执行（如果它不是刚好 stride 的倍数）
+        if length > 0:
+            x, y = segment[-1]
+            generate_motor_commands(x, y)
+
+    generate_motor_commands(2000,2000) # 移到外面
+
